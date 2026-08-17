@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,6 +20,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.UUID;
 
+import static org.springframework.data.domain.Sort.Direction.DESC;
 import static org.springframework.http.MediaType.APPLICATION_JSON_VALUE;
 
 @RestController
@@ -50,13 +52,7 @@ public class LoanApplicationController {
             @RequestParam(required = false) LoanApplicationStatus status,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant createdFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant createdTo,
-            Pageable pageable) {
+            @PageableDefault(sort = "createdAt", direction = DESC) Pageable pageable) {
         return loanApplicationService.getAll(status, createdFrom, createdTo, pageable);
-    }
-
-    // TODO: Add Swagger
-    @PostMapping("/{id}/offers/{offerId}/accept")
-    public LoanApplicationResponse acceptLenderOffer(@PathVariable UUID id, @PathVariable UUID offerId) {
-        return loanApplicationService.acceptLenderOffer(id, offerId);
     }
 }

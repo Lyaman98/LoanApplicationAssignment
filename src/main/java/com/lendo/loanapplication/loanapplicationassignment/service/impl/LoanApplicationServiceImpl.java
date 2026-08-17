@@ -22,6 +22,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 @Service
@@ -32,16 +33,16 @@ public class LoanApplicationServiceImpl implements LoanApplicationService {
     private final LoanApplicationRepository loanApplicationRepository;
     private final LoanPolicyProperties loanPolicy;
 
-    // TODO: Email verification, check for idempotency
     @Override
     @Transactional
     public LoanApplicationResponse create(CreateLoanApplicationRequest request) {
         validateRequest(request.amount(), request.loanTerms());
+        Instant now = Instant.now();
 
         Customer customer = Customer.builder()
                 .firstName(request.firstName())
                 .lastName(request.lastName())
-                .email(request.email())
+                .email(request.email().trim().toLowerCase(Locale.ROOT))
                 .build();
 
 
@@ -51,9 +52,10 @@ public class LoanApplicationServiceImpl implements LoanApplicationService {
                 .amount(request.amount())
                 .loanTerms(request.loanTerms())
                 .status(LoanApplicationStatus.PENDING)
+                .expiresAt(now.plus(loanPolicy.applicationExpiration()))
                 .build());
 
-        log.info("Successfully created load application with id: {}", application.getId());
+        log.info("Loan application created: applicationId={}, status={}", application.getId(), application.getStatus());
         return LoanApplicationResponse.from(application);
     }
 
@@ -80,8 +82,34 @@ public class LoanApplicationServiceImpl implements LoanApplicationService {
     @Override
     @Transactional
     public LoanApplicationResponse acceptLenderOffer(UUID applicationId, UUID offerId) {
-        throw  new UnsupportedOperationException();
+        LoanApplication application = loanApplicationRepository
+                .findByIdForUpdate(applicationId)
+                .orElseThrow(() -> new LoanApplicationNotFoundException(applicationId));
+
+        if (application.getStatus() != LoanApplicationStatus.PENDING) {
+            throw new ApplicationNotOpenException(applicationId, application.getStatus());
+        }
+
+        LenderOffer acceptedOffer = application.getOffers().stream()
+                .filter(offer -> offer.getId().equals(offerId) && offer.getStatus() != LenderOfferStatus.PENDING)
+                .findFirst()
+                .orElseThrow(() -> new LenderOfferNotFoundException(applicationId, offerId));
+
+
+        acceptedOffer.setStatus(LenderOfferStatus.ACCEPTED);
+        application.getOffers().stream()
+                .filter(offer -> !offer.getId().equals(offerId))
+                .filter(offer -> offer.getStatus() == LenderOfferStatus.PENDING)
+                .forEach(offer -> offer.setStatus(LenderOfferStatus.REJECTED));
+
+        application.setStatus(LoanApplicationStatus.ACCEPTED);
+        application.setAcceptedAt(Instant.now());
+
+        log.info("Offer accepted: applicationId={}, offerId={}", applicationId, offerId);
+
+        return LoanApplicationResponse.from(application);
     }
+
 
     private void validateRequest(BigDecimal amount, int loanTerms) {
         if (amount.compareTo(loanPolicy.minAmount()) < 0 || amount.compareTo(loanPolicy.maxAmount()) > 0) {

@@ -16,4 +16,8 @@ public interface LoanApplicationRepository
      */
     @EntityGraph(attributePaths = "offers")
     Optional<LoanApplication> findWithOffersById(UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from LoanApplication a where a.id = :id")
+    Optional<LoanApplication> findByIdForUpdate(@Param("id") UUID id);
 }

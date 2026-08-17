@@ -151,57 +151,6 @@ class LoanApplicationControllerTest {
         mockMvc.perform(get(BASE_PATH).param("status", "NOT_A_STATUS")).andExpect(status().isBadRequest());
     }
 
-    @Test
-    void acceptReturnsUpdatedApplicationWithSiblingsRejected() throws Exception {
-        UUID applicationId = UUID.randomUUID();
-        UUID offerId = UUID.randomUUID();
-        when(loanApplicationService.acceptLenderOffer(applicationId, offerId))
-                .thenReturn(acceptedResponse(applicationId, offerId));
-
-        mockMvc.perform(post(BASE_PATH + "/{id}/offers/{offerId}/accept", applicationId, offerId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(applicationId.toString()))
-                .andExpect(jsonPath("$.status").value("ACCEPTED"))
-                .andExpect(jsonPath("$.offers[0].status").value("ACCEPTED"))
-                .andExpect(jsonPath("$.offers[1].status").value("REJECTED"));
-
-        verify(loanApplicationService).acceptLenderOffer(applicationId, offerId);
-    }
-
-    @Test
-    void acceptRejectsMalformedUuidWith400() throws Exception {
-        mockMvc.perform(post(BASE_PATH + "/{id}/offers/not-a-uuid/accept", UUID.randomUUID()))
-                .andExpect(status().isBadRequest());
-    }
-
-    private static LoanApplicationResponse acceptedResponse(UUID applicationId, UUID acceptedOfferId) {
-        LenderOfferResponse accepted = new LenderOfferResponse(
-                acceptedOfferId,
-                "Lender A",
-                new BigDecimal("5.90"),
-                new BigDecimal("1200.00"),
-                new BigDecimal("43200.00"),
-                LenderOfferStatus.ACCEPTED,
-                Instant.parse("2026-01-15T10:00:00Z"));
-        LenderOfferResponse rejected = new LenderOfferResponse(
-                UUID.randomUUID(),
-                "Lender B",
-                new BigDecimal("6.40"),
-                new BigDecimal("1260.00"),
-                new BigDecimal("45360.00"),
-                LenderOfferStatus.REJECTED,
-                Instant.parse("2026-01-15T10:05:00Z"));
-
-        return new LoanApplicationResponse(
-                applicationId,
-                new CustomerResponse("Jane", "Doe", "jane.doe@example.com"),
-                new BigDecimal("50000.00"),
-                24,
-                LoanApplicationStatus.ACCEPTED,
-                Instant.parse("2026-01-15T09:00:00Z"),
-                List.of(accepted, rejected));
-    }
-
     private static CreateLoanApplicationRequest validRequest() {
         return request("Jane", "Doe", "jane.doe@example.com", "50000.00", 24);
     }

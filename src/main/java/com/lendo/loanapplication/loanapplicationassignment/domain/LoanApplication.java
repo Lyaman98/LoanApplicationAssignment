@@ -1,6 +1,7 @@
 package com.lendo.loanapplication.loanapplicationassignment.domain;
 
 import jakarta.persistence.*;
+import jakarta.validation.constraints.Positive;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 
@@ -29,6 +30,7 @@ public class LoanApplication {
     private Customer customer;
 
     @Column(nullable = false)
+    @Positive(message = "Amount must be positive")
     private BigDecimal amount;
 
     @Column(name = "loan_terms", nullable = false)

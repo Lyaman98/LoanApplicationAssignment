@@ -1,5 +1,6 @@
 package com.lendo.loanapplication.loanapplicationassignment.exception;
 
+import org.springframework.data.mapping.PropertyReferenceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -33,6 +34,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     ProblemDetail handleLoanPolicyViolation(LoanPolicyViolationException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
         problem.setTitle("Loan policy violation");
+        return problem;
+    }
+
+    @ExceptionHandler(PropertyReferenceException.class)
+    ProblemDetail handleUnknownSortProperty(PropertyReferenceException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+        problem.setTitle("Invalid sort property");
         return problem;
     }
 

@@ -63,30 +63,38 @@ Base path `/api/v1`. Interactive docs once the app is running:
 - Swagger UI - <http://localhost:8080/swagger-ui.html>
 - OpenAPI document - <http://localhost:8080/v3/api-docs>
 
+All endpoints except the Swagger paths require HTTP Basic credentials.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/applications` | Create an application. `201` with a `Location` header. |
+| `POST` | `/applications` | Create an application. `201` with a `Location` header. `CUSTOMER`. |
 | `GET` | `/applications/{id}` | One application including all its offers. |
 | `GET` | `/applications` | List, filterable by `status`, `createdFrom`, `createdTo`; paged. |
-| `POST` | `/applications/{applicationId}/offers` | A lender submits an offer. `201` with a `Location` header. |
-| `POST` | `/applications/{applicationId}/offers/{offerId}/accept` | The customer accepts one offer. |
+| `POST` | `/applications/{applicationId}/offers` | A lender submits an offer. `201` with a `Location` header. `LENDER`. |
+| `POST` | `/applications/{applicationId}/offers/{offerId}/accept` | The customer accepts one offer. `CUSTOMER`. |
+
+Demo credentials: `customer` / `password` and `lender` / `password`. In Swagger UI, put them into the
+**Authorize** dialog.
 
 ```bash
 # create
 curl -si -X POST localhost:8080/api/v1/applications \
+  -u customer:password \
   -H 'Content-Type: application/json' \
   -d '{"firstName":"Customer","lastName":"Surname","email":"customer@example.com","amount":50000.00,"loanTerms":24}'
 
 # a lender offers
 curl -s -X POST localhost:8080/api/v1/applications/$ID/offers \
+  -u lender:password \
   -H 'Content-Type: application/json' \
   -d '{"lenderName":"Lender A","annualInterestRate":5.90,"monthlyPaymentAmount":1200.00,"totalRepayment":43200.00}'
 
 # the customer accepts
-curl -s -X POST localhost:8080/api/v1/applications/$ID/offers/$OFFER_ID/accept
+curl -s -u customer:password -X POST localhost:8080/api/v1/applications/$ID/offers/$OFFER_ID/accept
 
 # filter and page
-curl -s "localhost:8080/api/v1/applications?status=PENDING&createdFrom=2026-01-01T00:00:00Z&page=0&size=20"
+curl -s -u customer:password \
+  "localhost:8080/api/v1/applications?status=PENDING&createdFrom=2026-01-01T00:00:00Z&page=0&size=20"
 ```
 
 Errors produced in one place by `GlobalExceptionHandler`:
@@ -103,6 +111,8 @@ Errors produced in one place by `GlobalExceptionHandler`:
 | Status | When                                                                       |
 | --- |----------------------------------------------------------------------------|
 | `400` | Malformed body, e.g. loan policy violation, reversed date range            |
+| `401` | Missing or wrong credentials                                                |
+| `403` | Authenticated, but the wrong role for this operation                        |
 | `404` | Unknown application or an offer that is not on this application            |
 | `409` | Application not `PENDING`, lender has already offered, offer already decided |
 
@@ -113,7 +123,7 @@ Errors produced in one place by `GlobalExceptionHandler`:
 **Accept is `POST /applications/{id}/offers/{offerId}/accept`, not a PATCH.**
 It closes the application and rejects the other offers, so it's an action, not a
 field update. It sits on the application controller because the customer accepts
-and the application is what changes — lenders submit, customers accept.
+and the application is what changes - lenders submit, customers accept.
 
 **Customer is embedded in `loan_application`, not its own table.**
 An application records what was submitted at that time. A shared customer row
@@ -134,6 +144,11 @@ See the section below.
 The service check is a read then-write that two concurrent callers can both
 pass. The index enforces the rule, the check just gives a 409.
 
+**Authentication: HTTP Basic with roles.**
+Customers and lenders are separate roles, so a lender cannot accept offers on a customer's behalf.
+Basic over an in-memory user store was chosen for simplicity - the rules about who may do what are the
+part that matters and they stay the same if the mechanism becomes JWT later. 
+
 **Flyway owns the schema, `ddl-auto=validate`.**
 Startup fails if entities and schema disagree. `open-in-view` is off so lazy
 loading mistakes surface during development.
@@ -145,9 +160,14 @@ would prove nothing. Requires Docker to run tests.
 
 ### Not implemented
 
-- **Authentication** — biggest gap: anyone can accept anyone's offer. Needs a
-  real decision on whether customers and lenders are separate principals.
-- **Idempotency on create** — a retried POST creates a second application. Would
+- **Ownership checks** - biggest gap now that roles exist: any authenticated
+  customer can accept any application's offer.
+- **JWT** - HTTP Basic with roles is used instead to keep
+  the security layer to a single config class. 
+- **A real user store** - credentials are demo users in configuration and Basic
+  sends them on every request with no expiry. Production would need a user store and
+  short-lived tokens.
+- **Idempotency on create** - a retried POST creates a second application. Would
   use an `Idempotency-Key` in the header sent by the Client.
 - **Async fan-out to partners** - Currently partners are assigned as inbounds for the assignment and simplicity. 
 - **Background expiry check** - A scheduled bulk `UPDATE` that would close the expired applications
@@ -173,9 +193,9 @@ conflict and there is no retry logic or lock exception to translate.
 
 ### The three write paths need different things
 
-- **create** — plain insert, no race
-- **submit offer** — unique index, since we can't lock a row that doesn't exist
-- **accept** — row lock, since a read decides a write
+- **create** - plain insert, no race
+- **submit offer** - unique index, since we can't lock a row that doesn't exist
+- **accept** - row lock, since a read decides a write
 ---
 
 ## Testing

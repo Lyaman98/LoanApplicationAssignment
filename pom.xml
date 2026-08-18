@@ -45,6 +45,11 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
         <!-- Serves the generated OpenAPI document and Swagger UI. Not managed by Spring Boot's
              BOM, and the 3.x line targets Boot 4, so the version is pinned here. -->
         <dependency>

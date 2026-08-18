@@ -122,8 +122,16 @@ Errors produced in one place by `GlobalExceptionHandler`:
 
 **Accept is `POST /applications/{id}/offers/{offerId}/accept`, not a PATCH.**
 It closes the application and rejects the other offers, so it's an action, not a
-field update. It sits on the application controller because the customer accepts
-and the application is what changes - lenders submit, customers accept.
+field update. A PATCH with a status in the body would let clients try changes
+that aren't allowed.
+
+**Accepting is handled by `LoanApplicationService`, not `LenderOfferService`.**
+Acceptance appears to be an operation on an offer, but the application's own
+status changes with it: it moves from `PENDING` to `ACCEPTED` while the chosen
+offer is accepted and every remaining offer is rejected, all in one transaction.
+The endpoint stays with the other offer routes, since it falls under
+`/applications/{id}/offers/` and a single controller owning a single path keeps
+the routing predictable.
 
 **Customer is embedded in `loan_application`, not its own table.**
 An application records what was submitted at that time. A shared customer row
@@ -170,6 +178,7 @@ would prove nothing. Requires Docker to run tests.
 - **Idempotency on create** - a retried POST creates a second application. Would
   use an `Idempotency-Key` in the header sent by the Client.
 - **Async fan-out to partners** - Currently partners are assigned as inbounds for the assignment and simplicity. 
+- **Domain events** - nothing is published when an application is created, an offer arrives or one is accepted.
 - **Background expiry check** - A scheduled bulk `UPDATE` that would close the expired applications
 - **Partner lenders and per-partner configuration** - Currently in the system a lender is a free-text name on a request, not a registered partner.
 ## Concurrency

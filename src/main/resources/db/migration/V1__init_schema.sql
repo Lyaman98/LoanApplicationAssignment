@@ -7,7 +7,10 @@ create table loan_application
     amount      numeric(14, 2) not null,
     loan_terms  integer        not null,
     status      varchar(20)    not null,
-    created_at  timestamptz    not null
+    created_at  timestamptz    not null,
+    accepted_at timestamptz,
+    expires_at  timestamptz    not null,
+    expired_at  timestamptz
 );
 
 create table lender_offer

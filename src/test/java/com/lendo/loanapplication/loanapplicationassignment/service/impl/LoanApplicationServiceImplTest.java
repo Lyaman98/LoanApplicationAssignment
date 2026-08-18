@@ -19,6 +19,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -45,7 +46,8 @@ class LoanApplicationServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        LoanPolicyProperties policy = new LoanPolicyProperties(MIN_AMOUNT, MAX_AMOUNT, MIN_TERMS, MAX_TERMS);
+        LoanPolicyProperties policy = new LoanPolicyProperties(
+                MIN_AMOUNT, MAX_AMOUNT, MIN_TERMS, MAX_TERMS, Duration.ofHours(24));
         service = new LoanApplicationServiceImpl(loanApplicationRepository, policy);
     }
 
@@ -63,6 +65,16 @@ class LoanApplicationServiceImplTest {
             assertThat(response.loanTerms()).isEqualTo(24);
             assertThat(response.customer().email()).isEqualTo("customer@example.com");
             assertThat(response.offers()).isEmpty();
+        }
+
+        @Test
+        void normalizesEmailBeforePersisting() {
+            when(loanApplicationRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+            LoanApplicationResponse response = service.create(new CreateLoanApplicationRequest(
+                    "Customer Name", "Customer LastName", " Customer@Example.COM ", new BigDecimal("50000.00"), 24));
+
+            assertThat(response.customer().email()).isEqualTo("customer@example.com");
         }
 
         @ParameterizedTest
@@ -149,6 +161,8 @@ class LoanApplicationServiceImplTest {
 
             assertThat(page.getContent()).hasSize(1);
             assertThat(page.getTotalElements()).isEqualTo(1);
+            assertThat(page.getPageable().getPageNumber()).isZero();
+            assertThat(page.getPageable().getPageSize()).isEqualTo(20);
         }
 
         @Test
@@ -165,8 +179,137 @@ class LoanApplicationServiceImplTest {
                             org.springframework.data.domain.Pageable.class));
         }
     }
+    @Nested
+    class AcceptLenderOffer {
+
+        @Test
+        void acceptsChosenOfferRejectsSiblingsAndClosesApplication() {
+            UUID applicationId = UUID.randomUUID();
+            UUID acceptedId = UUID.randomUUID();
+            UUID rejectedId = UUID.randomUUID();
+
+            LoanApplication application = pendingApplication(applicationId);
+            LenderOffer lenderA = offer(acceptedId, application, "Lender A", LenderOfferStatus.PENDING);
+            LenderOffer lenderB = offer(rejectedId, application, "Lender B", LenderOfferStatus.PENDING);
+            application.getOffers().addAll(List.of(lenderA, lenderB));
+
+            when(loanApplicationRepository.findByIdForUpdate(applicationId)).thenReturn(Optional.of(application));
+
+            LoanApplicationResponse response = service.acceptLenderOffer(applicationId, acceptedId);
+
+            assertThat(lenderA.getStatus()).isEqualTo(LenderOfferStatus.ACCEPTED);
+            assertThat(lenderB.getStatus()).isEqualTo(LenderOfferStatus.REJECTED);
+            assertThat(application.getStatus()).isEqualTo(LoanApplicationStatus.ACCEPTED);
+            assertThat(application.getAcceptedAt()).isNotNull();
+            assertThat(response.status()).isEqualTo(LoanApplicationStatus.ACCEPTED);
+        }
+
+        @Test
+        void takesTheRowLockRatherThanAPlainRead() {
+            UUID applicationId = UUID.randomUUID();
+            UUID offerId = UUID.randomUUID();
+            LoanApplication application = pendingApplication(applicationId);
+            application.getOffers().add(offer(offerId, application, "Lender A", LenderOfferStatus.PENDING));
+            when(loanApplicationRepository.findByIdForUpdate(applicationId)).thenReturn(Optional.of(application));
+
+            service.acceptLenderOffer(applicationId, offerId);
+
+            verify(loanApplicationRepository).findByIdForUpdate(applicationId);
+            verify(loanApplicationRepository, never()).findById(applicationId);
+        }
+
+        @Test
+        void throwsWhenApplicationDoesNotExist() {
+            UUID applicationId = UUID.randomUUID();
+            when(loanApplicationRepository.findByIdForUpdate(applicationId)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service.acceptLenderOffer(applicationId, UUID.randomUUID()))
+                    .isInstanceOf(LoanApplicationNotFoundException.class);
+        }
+
+        /** This is the branch a losing concurrent request takes after the lock is released. */
+        @Test
+        void throwsWhenApplicationIsAlreadyAccepted() {
+            UUID applicationId = UUID.randomUUID();
+            LoanApplication application =
+                    application(applicationId, LoanApplicationStatus.ACCEPTED, notYetExpired());
+            when(loanApplicationRepository.findByIdForUpdate(applicationId)).thenReturn(Optional.of(application));
+
+            assertThatThrownBy(() -> service.acceptLenderOffer(applicationId, UUID.randomUUID()))
+                    .isInstanceOf(ApplicationNotOpenException.class)
+                    .hasMessageContaining("ACCEPTED");
+        }
+
+        @Test
+        void expiresApplicationBeforeAcceptingAnOffer() {
+            UUID applicationId = UUID.randomUUID();
+            UUID offerId = UUID.randomUUID();
+            LoanApplication application =
+                    application(applicationId, LoanApplicationStatus.PENDING, Instant.now().minusSeconds(1));
+            application.getOffers().add(offer(offerId, application, "Lender A", LenderOfferStatus.PENDING));
+            when(loanApplicationRepository.findByIdForUpdate(applicationId)).thenReturn(Optional.of(application));
+
+            assertThatThrownBy(() -> service.acceptLenderOffer(applicationId, offerId))
+                    .isInstanceOf(ApplicationNotOpenException.class)
+                    .hasMessageContaining("EXPIRED");
+
+            assertThat(application.getStatus()).isEqualTo(LoanApplicationStatus.EXPIRED);
+            assertThat(application.getExpiredAt()).isNotNull();
+        }
+
+        @Test
+        void throwsWhenOfferBelongsToAnotherApplication() {
+            UUID applicationId = UUID.randomUUID();
+            LoanApplication application = pendingApplication(applicationId);
+            application.getOffers()
+                    .add(offer(UUID.randomUUID(), application, "Lender A", LenderOfferStatus.PENDING));
+            when(loanApplicationRepository.findByIdForUpdate(applicationId)).thenReturn(Optional.of(application));
+
+            assertThatThrownBy(() -> service.acceptLenderOffer(applicationId, UUID.randomUUID()))
+                    .isInstanceOf(LenderOfferNotFoundException.class);
+        }
+
+        @Test
+        void leavesAlreadyRejectedOffersUntouched() {
+            UUID applicationId = UUID.randomUUID();
+            UUID acceptedId = UUID.randomUUID();
+
+            LoanApplication application = pendingApplication(applicationId);
+            LenderOffer accepted = offer(acceptedId, application, "Lender A", LenderOfferStatus.PENDING);
+            LenderOffer alreadyRejected =
+                    offer(UUID.randomUUID(), application, "Lender B", LenderOfferStatus.REJECTED);
+            application.getOffers().addAll(List.of(accepted, alreadyRejected));
+
+            when(loanApplicationRepository.findByIdForUpdate(applicationId)).thenReturn(Optional.of(application));
+
+            service.acceptLenderOffer(applicationId, acceptedId);
+
+            assertThat(alreadyRejected.getStatus()).isEqualTo(LenderOfferStatus.REJECTED);
+        }
+
+        @Test
+        void rejectsAcceptanceOfAnOfferThatIsNotPending() {
+            UUID applicationId = UUID.randomUUID();
+            UUID offerId = UUID.randomUUID();
+            LoanApplication application = pendingApplication(applicationId);
+            application.getOffers().add(offer(offerId, application, "Lender A", LenderOfferStatus.REJECTED));
+            when(loanApplicationRepository.findByIdForUpdate(applicationId)).thenReturn(Optional.of(application));
+
+            assertThatThrownBy(() -> service.acceptLenderOffer(applicationId, offerId))
+                    .isInstanceOf(OfferNotPendingException.class);
+            assertThat(application.getStatus()).isEqualTo(LoanApplicationStatus.PENDING);
+        }
+    }
+
+    private static Instant notYetExpired() {
+        return Instant.now().plus(Duration.ofDays(1));
+    }
 
     private static LoanApplication pendingApplication(UUID id) {
+        return application(id, LoanApplicationStatus.PENDING, notYetExpired());
+    }
+
+    private static LoanApplication application(UUID id, LoanApplicationStatus status, Instant expiresAt) {
         return LoanApplication.builder()
                 .id(id)
                 .customer(Customer.builder()
@@ -176,8 +319,9 @@ class LoanApplicationServiceImplTest {
                         .build())
                 .amount(new BigDecimal("50000.00"))
                 .loanTerms(24)
-                .status(LoanApplicationStatus.PENDING)
+                .status(status)
                 .createdAt(Instant.parse("2026-01-15T10:00:00Z"))
+                .expiresAt(expiresAt)
                 .offers(new ArrayList<>())
                 .build();
     }

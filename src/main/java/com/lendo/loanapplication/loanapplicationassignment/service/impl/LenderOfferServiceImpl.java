@@ -4,7 +4,6 @@ package com.lendo.loanapplication.loanapplicationassignment.service.impl;
 import com.lendo.loanapplication.loanapplicationassignment.domain.LenderOffer;
 import com.lendo.loanapplication.loanapplicationassignment.domain.LenderOfferStatus;
 import com.lendo.loanapplication.loanapplicationassignment.domain.LoanApplication;
-import com.lendo.loanapplication.loanapplicationassignment.domain.LoanApplicationStatus;
 import com.lendo.loanapplication.loanapplicationassignment.dto.LenderOfferRequest;
 import com.lendo.loanapplication.loanapplicationassignment.dto.LenderOfferResponse;
 import com.lendo.loanapplication.loanapplicationassignment.exception.ApplicationNotOpenException;
@@ -19,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
+import java.time.Instant;
 
 @Service
 @RequiredArgsConstructor
@@ -35,7 +35,8 @@ public class LenderOfferServiceImpl implements LenderOfferService {
                 .findByIdForUpdate(applicationId)
                 .orElseThrow(() -> new LoanApplicationNotFoundException(applicationId));
 
-        if (application.getStatus() != LoanApplicationStatus.PENDING) {
+        application.setAsExpiredIfStale(Instant.now());
+        if (application.isOpenForOffers()) {
             throw new ApplicationNotOpenException(applicationId, application.getStatus());
         }
 

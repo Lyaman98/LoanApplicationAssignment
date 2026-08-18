@@ -42,10 +42,29 @@ public class LenderOffer {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     @Builder.Default
-    @Setter
     private LenderOfferStatus status = LenderOfferStatus.PENDING;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    public boolean isPending() {
+        return status == LenderOfferStatus.PENDING;
+    }
+
+    public void accept() {
+        requirePending();
+        status = LenderOfferStatus.ACCEPTED;
+    }
+
+    public void reject() {
+        requirePending();
+        status = LenderOfferStatus.REJECTED;
+    }
+
+    private void requirePending() {
+        if (status != LenderOfferStatus.PENDING) {
+            throw new IllegalStateException("Offer %s is already %s".formatted(id, status));
+        }
+    }
 }

@@ -86,24 +86,28 @@ public class LoanApplicationServiceImpl implements LoanApplicationService {
                 .findByIdForUpdate(applicationId)
                 .orElseThrow(() -> new LoanApplicationNotFoundException(applicationId));
 
-        if (application.getStatus() != LoanApplicationStatus.PENDING) {
+        Instant now = Instant.now();
+        application.setAsExpiredIfStale(now);
+        if (application.isOpenForOffers()) {
             throw new ApplicationNotOpenException(applicationId, application.getStatus());
         }
 
-        LenderOffer acceptedOffer = application.getOffers().stream()
-                .filter(offer -> offer.getId().equals(offerId) && offer.getStatus() != LenderOfferStatus.PENDING)
+        LenderOffer chosenOffer = application.getOffers().stream()
+                .filter(offer -> offer.getId().equals(offerId))
                 .findFirst()
                 .orElseThrow(() -> new LenderOfferNotFoundException(applicationId, offerId));
 
+        if (!chosenOffer.isPending()) {
+            throw new OfferNotPendingException(applicationId, offerId, chosenOffer.getStatus());
+        }
 
-        acceptedOffer.setStatus(LenderOfferStatus.ACCEPTED);
+        chosenOffer.accept();
         application.getOffers().stream()
                 .filter(offer -> !offer.getId().equals(offerId))
-                .filter(offer -> offer.getStatus() == LenderOfferStatus.PENDING)
-                .forEach(offer -> offer.setStatus(LenderOfferStatus.REJECTED));
+                .filter(LenderOffer::isPending)
+                .forEach(LenderOffer::reject);
 
-        application.setStatus(LoanApplicationStatus.ACCEPTED);
-        application.setAcceptedAt(Instant.now());
+        application.accept(now);
 
         log.info("Offer accepted: applicationId={}, offerId={}", applicationId, offerId);
 

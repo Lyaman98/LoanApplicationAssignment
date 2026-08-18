@@ -94,7 +94,11 @@ class OfferAcceptanceConcurrencyTest extends AbstractPostgresTest {
 
         assertThat(failures).hasSize(1);
         assertThat(failures.getFirst()).isInstanceOf(DuplicateOfferException.class);
-        assertThat(lenderOfferRepository.findAll()).hasSize(1);
+        assertThat(loanApplicationRepository
+                        .findWithOffersById(applicationId)
+                        .orElseThrow()
+                        .getOffers())
+                .hasSize(1);
     }
 
     private static List<Throwable> runConcurrently(Callable<?> first, Callable<?> second) throws Exception {

@@ -1,0 +1,7 @@
+target/
+.git/
+.idea/
+_to_delete/
+*.iml
+*.md
+*.pdf
